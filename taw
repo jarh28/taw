@@ -32,14 +32,14 @@ stop_spin() {
 
 check_instance_selected() {
     if [ -z "$1" ]; then
-        echo "taw: no instance was selected"
+        echo "taw: no instance was selected" > /dev/stderr
         exit 0
     fi
 }
 
 check_type_selected() {
     if [ -z "$1" ]; then
-        echo "taw: no type was selected"
+        echo "taw: no type was selected" > /dev/stderr
         exit 0
     fi
 }
@@ -89,7 +89,7 @@ case "$1" in
         check_instance_selected $instance_id
         instance_status=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].State.Name" --filters "Name=instance-id,Values='$instance_id'" | jq -r '.[] | .[]')
         if [ $instance_status != "stopped"  ]; then
-            echo "taw: instance is not stopped. Use 'taw stop' for stopping the instance before trying to change the instance type"
+            echo "taw: instance is not stopped. Use 'taw stop' for stopping the instance before trying to change the instance type" > /dev/stderr
             exit 0
         fi
         instance_type=$(cat ~/.aws/ec2.types | fzf)
