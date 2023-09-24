@@ -1,0 +1,104 @@
+#!/bin/bash
+
+display_help() {
+    echo "usage: 'taw <command>'"
+    echo
+    echo "commands:"
+    echo "  fecth      fetch data about available EC2 instances and instance types"
+    echo "  list       list all available EC2 instances"
+    echo "  start      start an EC2 instance"
+    echo "  stop       stop an EC2 instance"
+    echo "  type       change the type of an EC2 instance"
+    echo "  version    show taw version"
+    echo "  help       display this help message"
+    echo
+}
+
+start_spin() {
+    local spinstr='|/-\'
+    while true; do
+        local temp=${spinstr#?}
+        printf "\r$1 %c" "$spinstr"
+        spinstr=$temp${spinstr%"$temp"}
+        sleep 0.1
+    done
+}
+
+stop_spin() {
+    kill -9 $1
+    wait $1 &> /dev/null
+    printf "\b \n"
+}
+
+check_instance_selected() {
+    if [ -z "$1" ]; then
+        echo "taw: no instance was selected"
+        exit 0
+    fi
+}
+
+check_type_selected() {
+    if [ -z "$1" ]; then
+        echo "taw: no type was selected"
+        exit 0
+    fi
+}
+
+if [ $# -gt 1 ]; then
+    echo "taw: too many arguments provided. See 'taw help'" > /dev/stderr
+    exit 1
+fi
+
+case "$1" in
+    fetch|-f)
+        start_spin "fetching EC2 instances..." & spin_pid=$!
+        aws ec2 describe-instances --query "Reservations[].Instances[].{id:InstanceId, name:Tags[?Key=='Name']|[0].Value}" | jq -r '.[] | "id: \(.id) | name: \(.name)"' > ~/.aws/ec2.list
+        aws ec2 describe-instance-type-offerings --query "InstanceTypeOfferings[].InstanceType" | jq -r '.[]' > ~/.aws/ec2.types
+        stop_spin $spin_pid
+        echo "done"
+        ;;
+    list|-l)
+        instance_name=$(cat ~/.aws/ec2.list | awk "{print \$5}" | fzf)
+        check_instance_selected $instance_name
+        aws ec2 describe-instances --query "Reservations[*].Instances[*].{ID:InstanceId, Name:Tags[?Key=='Name']|[0].Value, Status:State.Name, Type:InstanceType, Arch:Architecture, Platform:PlatformDetails, PublicDNS:PublicDnsName, PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='$instance_name'" --output table
+        ;;
+    start|-s)
+        instance=$(cat ~/.aws/ec2.list | fzf)
+        check_instance_selected $instance
+        instance_id=$(echo "$instance" | awk "{print \$2}")
+        instance_name=$(echo "$instance" | awk "{print \$5}")
+        start_spin "starting instance..." & spin_pid=$!
+        aws ec2 start-instances --instance-ids $instance_id | jq '.StartingInstances[]' > /dev/null
+        aws ec2 wait instance-running --instance-ids $instance_id
+        instance_public_dns=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{host:PublicDnsName}" --filters "Name=tag:Name,Values='$instance_name'" | jq -r '.[] | .[] | "\(.host)"')
+        stop_spin $spin_pid        
+        sed -i "/^Host $instance_name$/,/^$/s/HostName .*/HostName $instance_public_dns/" ~/.ssh/config   
+        echo "instance is running"
+        ;;
+    stop|-x)
+        instance_id=$(cat ~/.aws/ec2.list | fzf | awk "{print \$2}")
+        check_instance_selected $instance_id
+        start_spin "stopping instance..." & spin_pid=$!
+        aws ec2 stop-instances --instance-ids $instance_id | jq '.StoppingInstances[]' > /dev/null
+        aws ec2 wait instance-stopped --instance-ids $instance_id
+        stop_spin $spin_pid
+        echo "instance was stopped"
+        ;;
+    type|-t)
+        instance_id=$(cat ~/.aws/ec2.list | fzf | awk "{print \$2}")
+        check_instance_selected $instance_id
+        instance_type=$(cat ~/.aws/ec2.types | fzf)
+        check_type_selected $instance_type
+        aws ec2 modify-instance-attribute --instance-id $instance_id --instance-type "{\"Value\": \"$instance_type\"}"
+        echo "instance type was changed"
+        ;;
+    version|-v)
+        echo "0.1.0"
+        ;;
+    help|-h)
+        display_help
+        ;;
+    *)
+        echo "taw: '$1' is not a taw command. See 'taw help'" > /dev/stderr
+        ;;
+esac

@@ -1,0 +1,17 @@
+#!/bin/bash
+
+dependencies=("aws" "fzf" "awk" "jq")
+not_found_deps=false
+for dep in "${dependencies[@]}"; do
+    if ! command -v "$dep" &> /dev/null; then 
+        echo "taw: '$dep' is not installed" >> /dev/stderr
+        not_found_deps=true
+    fi
+done
+if $not_found_deps; then
+    echo "install above dependencies and try to install again" >> /dev/stderr
+    exit 1
+fi
+
+sudo cp taw /usr/local/bin/
+echo "taw has been installed"
